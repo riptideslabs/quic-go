@@ -155,7 +155,7 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 		return ErrWouldBlock
 	}
 
-	isNewlyCompleted, hasData, err := s.tryWriteAll(p)
+	isNewlyCompleted, hasData, err := s.tryWriteAll(p, false)
 	if isNewlyCompleted {
 		s.sender.onStreamCompleted(s.streamID)
 	}
@@ -165,7 +165,36 @@ func (s *SendStream) TryWriteAll(p []byte) error {
 	return err
 }
 
-func (s *SendStream) tryWriteAll(p []byte) (bool /* is newly completed */, bool /* has data */, error) {
+// TryWriteAllAndClose writes data to the stream and closes it for writing, if the data can be queued immediately.
+// It is [SendStream.TryWriteAll] followed by [SendStream.Close], done as a single step:
+// the STREAM frame that carries the end of the data also carries the FIN,
+// which a Close after a Write of more than a packet's worth of data doesn't achieve.
+// If the entire slice can't be queued immediately, it queues nothing, leaves the stream open
+// and returns [ErrWouldBlock].
+func (s *SendStream) TryWriteAllAndClose(p []byte) error {
+	if len(p) == 0 {
+		return s.Close()
+	}
+
+	select {
+	case s.writeOnce <- struct{}{}:
+		defer func() { <-s.writeOnce }()
+	default:
+		return ErrWouldBlock
+	}
+
+	isNewlyCompleted, hasData, err := s.tryWriteAll(p, true)
+	if isNewlyCompleted {
+		s.sender.onStreamCompleted(s.streamID)
+	}
+	if hasData {
+		s.sender.onHasStreamData(s.streamID, s)
+		s.ctxCancel(ErrStreamClosed)
+	}
+	return err
+}
+
+func (s *SendStream) tryWriteAll(p []byte, fin bool) (bool /* is newly completed */, bool /* has data */, error) {
 	// This might wait briefly while a packet is dequeuing stream data.
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -215,6 +244,10 @@ func (s *SendStream) tryWriteAll(p []byte) (bool /* is newly completed */, bool 
 		s.nextFrame.Data = append(s.nextFrame.Data, p...)
 	}
 	s.nextFrameReserved = true
+	// Set while the data is still queued, so that the frame carrying its end also carries the FIN.
+	if fin {
+		s.finishedWriting = true
+	}
 	return false, true, nil
 }
 
