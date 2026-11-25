@@ -112,6 +112,16 @@ type Transport struct {
 	// However, if the user explicitly requested gzip it is not automatically uncompressed.
 	DisableCompression bool
 
+	// SendRequestEndWithHeaders, if true, ends the stream of a request without a body
+	// in the same step as writing the request header, such that the FIN is sent
+	// on the STREAM frame that carries the end of the header.
+	// Otherwise the stream is closed after the header was written,
+	// and for a header that doesn't fit into a single packet,
+	// the FIN is usually sent in a STREAM frame of its own.
+	// Both are valid, but some servers only process a request
+	// without a body correctly if they learn about its end along with the header.
+	SendRequestEndWithHeaders bool
+
 	Logger *slog.Logger
 
 	mutex sync.Mutex
@@ -149,6 +159,7 @@ func (t *Transport) init() error {
 				t.AdditionalSettings,
 				t.MaxResponseHeaderBytes,
 				t.DisableCompression,
+				t.SendRequestEndWithHeaders,
 				t.Logger,
 			)
 		}
@@ -458,6 +469,7 @@ func (t *Transport) NewClientConn(conn *quic.Conn) *ClientConn {
 		t.AdditionalSettings,
 		t.MaxResponseHeaderBytes,
 		t.DisableCompression,
+		t.SendRequestEndWithHeaders,
 		t.Logger,
 	)
 	go func() {
@@ -484,6 +496,7 @@ func (t *Transport) NewRawClientConn(conn *quic.Conn) *RawClientConn {
 			t.AdditionalSettings,
 			t.MaxResponseHeaderBytes,
 			t.DisableCompression,
+			t.SendRequestEndWithHeaders,
 			t.Logger,
 		),
 	}

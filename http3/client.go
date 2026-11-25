@@ -61,6 +61,10 @@ type ClientConn struct {
 	// However, if the user explicitly requested gzip it is not automatically uncompressed.
 	disableCompression bool
 
+	// sendRequestEndWithHeaders, if true, sends the FIN of a request without a body
+	// on the STREAM frame that carries the end of the request header.
+	sendRequestEndWithHeaders bool
+
 	streamMx     sync.Mutex
 	maxStreamID  quic.StreamID // set once a GOAWAY frame is received
 	goAwayCtx    context.Context
@@ -80,6 +84,7 @@ func newClientConn(
 	additionalSettings map[uint64]uint64,
 	maxResponseHeaderBytes int,
 	disableCompression bool,
+	sendRequestEndWithHeaders bool,
 	logger *slog.Logger,
 ) *ClientConn {
 	var qlogger qlogwriter.Recorder
@@ -87,12 +92,13 @@ func newClientConn(
 		qlogger = qlogTrace.AddProducer()
 	}
 	c := &ClientConn{
-		conn:               conn,
-		additionalSettings: additionalSettings,
-		disableCompression: disableCompression,
-		maxStreamID:        invalidStreamID,
-		logger:             logger,
-		qlogger:            qlogger,
+		conn:                      conn,
+		additionalSettings:        additionalSettings,
+		disableCompression:        disableCompression,
+		sendRequestEndWithHeaders: sendRequestEndWithHeaders,
+		maxStreamID:               invalidStreamID,
+		logger:                    logger,
+		qlogger:                   qlogger,
 	}
 	c.goAwayCtx, c.goAwayCancel = context.WithCancel(context.Background())
 	if maxResponseHeaderBytes <= 0 {
@@ -381,7 +387,9 @@ func (c *ClientConn) sendRequestBody(str *RequestStream, body io.ReadCloser, con
 func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Response, error) {
 	trace := httptrace.ContextClientTrace(req.Context())
 	var sendingReqFailed bool
-	if err := str.sendRequestHeader(req); err != nil {
+	// The request stream ends with the header if there's neither a body nor trailers to send.
+	endWithHeaders := c.sendRequestEndWithHeaders && (req.Body == nil || req.Body == http.NoBody) && len(req.Trailer) == 0
+	if err := str.sendRequestHeader(req, endWithHeaders); err != nil {
 		traceWroteRequest(trace, err)
 		if c.logger != nil {
 			c.logger.Debug("error writing request", "error", err)
@@ -389,7 +397,9 @@ func (c *ClientConn) doRequest(req *http.Request, str *RequestStream) (*http.Res
 		sendingReqFailed = true
 	}
 	if !sendingReqFailed {
-		if req.Body == nil {
+		if endWithHeaders {
+			traceWroteRequest(trace, nil)
+		} else if req.Body == nil {
 			traceWroteRequest(trace, nil)
 			str.Close()
 		} else {

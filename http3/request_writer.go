@@ -52,6 +52,36 @@ func (w *requestWriter) WriteRequestHeader(wr io.Writer, req *http.Request, gzip
 	return nil
 }
 
+// A requestEndWriter can end a stream together with the last bytes written to it.
+type requestEndWriter interface {
+	io.WriteCloser
+	TryWriteAllAndClose([]byte) error
+}
+
+// WriteRequestHeaderAndClose writes the request header and closes the stream for writing,
+// such that the FIN is sent on the STREAM frame carrying the end of the header.
+// This is only possible if flow control allows queueing the entire header immediately.
+// Otherwise, the header is written and the stream closed afterwards.
+func (w *requestWriter) WriteRequestHeaderAndClose(wr requestEndWriter, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder) error {
+	buf := &bytes.Buffer{}
+	if err := w.writeHeaders(buf, req, gzip, streamID, qlogger); err != nil {
+		return err
+	}
+	err := wr.TryWriteAllAndClose(buf.Bytes())
+	if errors.Is(err, quic.ErrWouldBlock) {
+		if _, err := wr.Write(buf.Bytes()); err != nil {
+			return err
+		}
+		err = wr.Close()
+	}
+	if err != nil {
+		return err
+	}
+	trace := httptrace.ContextClientTrace(req.Context())
+	traceWroteHeaders(trace)
+	return nil
+}
+
 func (w *requestWriter) writeHeaders(wr io.Writer, req *http.Request, gzip bool, streamID quic.StreamID, qlogger qlogwriter.Recorder) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()

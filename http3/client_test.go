@@ -14,6 +14,7 @@ import (
 	"github.com/quic-go/qpack"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3/qlog"
+	quicqlog "github.com/quic-go/quic-go/qlog"
 	"github.com/quic-go/quic-go/qlogwriter"
 	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/quic-go/quic-go/testutils/events"
@@ -188,6 +189,72 @@ func testClientRequest(t *testing.T, use0RTT bool, method string, rspBytes []byt
 		}
 	}
 	return res.rsp
+}
+
+func TestClientRequestEndWithHeaders(t *testing.T) {
+	for _, body := range []io.ReadCloser{nil, http.NoBody} {
+		name := "nil body"
+		if body != nil {
+			name = "http.NoBody"
+		}
+		t.Run(name, func(t *testing.T) {
+			fin := testClientRequestEnd(t, &Transport{SendRequestEndWithHeaders: true}, body)
+			// The header needs several packets. The FIN is on the STREAM frame carrying its end.
+			require.Positive(t, fin.Offset)
+			require.Positive(t, fin.Length)
+		})
+	}
+}
+
+// testClientRequestEnd sends a GET request with a header that doesn't fit into a single packet,
+// and returns the STREAM frame that carried the FIN of the request stream.
+func testClientRequestEnd(t *testing.T, tr *Transport, body io.ReadCloser) *quicqlog.StreamFrame {
+	t.Helper()
+
+	var recorder events.Recorder
+	clientConn, serverConn := newConnPair(t, withClientRecorder(&recorder))
+
+	req, err := http.NewRequest(http.MethodGet, "http://quic-go.net", nil)
+	require.NoError(t, err)
+	req.Body = body
+	req.Header.Set("X-Large", randomString(5000))
+
+	errChan := make(chan error, 1)
+	go func() {
+		_, err := tr.NewClientConn(clientConn).RoundTrip(req)
+		errChan <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	str, err := serverConn.AcceptStream(ctx)
+	require.NoError(t, err)
+	str.SetReadDeadline(time.Now().Add(time.Second))
+
+	// the request stream is closed, without the client having seen a response
+	_, err = io.ReadAll(str)
+	require.NoError(t, err)
+
+	_, err = str.Write(encodeResponse(t, http.StatusOK))
+	require.NoError(t, err)
+
+	select {
+	case err := <-errChan:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+
+	var fins []*quicqlog.StreamFrame
+	for _, ev := range recorder.Events(quicqlog.PacketSent{}) {
+		for _, f := range ev.(quicqlog.PacketSent).Frames {
+			if sf, ok := f.Frame.(*quicqlog.StreamFrame); ok && sf.StreamID == quicqlog.StreamID(str.StreamID()) && sf.Fin {
+				fins = append(fins, sf)
+			}
+		}
+	}
+	require.Len(t, fins, 1)
+	return fins[0]
 }
 
 func randomString(length int) string {

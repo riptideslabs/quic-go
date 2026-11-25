@@ -27,6 +27,7 @@ type datagramStream interface {
 	SetWriteDeadline(time.Time) error
 	SetPriority(urgency int8, incremental bool)
 	TryWriteAll([]byte) error
+	TryWriteAllAndClose([]byte) error
 	SendDatagram(b []byte) error
 	ReceiveDatagram(ctx context.Context) ([]byte, error)
 
@@ -590,10 +591,12 @@ func (s *RequestStream) SendRequestHeader(req *http.Request) error {
 	if req.Body != nil && req.Body != http.NoBody {
 		return errors.New("http3: invalid use of RequestStream.SendRequestHeader with a request that has a request body")
 	}
-	return s.sendRequestHeader(req)
+	return s.sendRequestHeader(req, false)
 }
 
-func (s *RequestStream) sendRequestHeader(req *http.Request) error {
+// sendRequestHeader sends the request header.
+// If end is set, it also closes the stream for writing, with the FIN sent along with the header.
+func (s *RequestStream) sendRequestHeader(req *http.Request, end bool) error {
 	if s.sentRequest {
 		return errors.New("http3: invalid duplicate use of RequestStream.SendRequestHeader")
 	}
@@ -614,6 +617,9 @@ func (s *RequestStream) sendRequestHeader(req *http.Request) error {
 	// Only Extended CONNECT requests can define such semantics.
 	if !isExtendedConnectRequest(req) {
 		s.conn.RejectDatagrams(s.StreamID())
+	}
+	if end {
+		return maybeReplaceError(s.requestWriter.WriteRequestHeaderAndClose(s.str.datagramStream, req, s.requestedGzip, s.str.StreamID(), s.str.qlogger))
 	}
 	return maybeReplaceError(s.requestWriter.WriteRequestHeader(s.str.datagramStream, req, s.requestedGzip, s.str.StreamID(), s.str.qlogger))
 }

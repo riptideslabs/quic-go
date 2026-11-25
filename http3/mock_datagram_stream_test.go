@@ -570,6 +570,44 @@ func (c *MockDatagramStreamTryWriteAllCall) DoAndReturn(f func([]byte) error) *M
 	return c
 }
 
+// TryWriteAllAndClose mocks base method.
+func (m *MockDatagramStream) TryWriteAllAndClose(arg0 []byte) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TryWriteAllAndClose", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// TryWriteAllAndClose indicates an expected call of TryWriteAllAndClose.
+func (mr *MockDatagramStreamMockRecorder) TryWriteAllAndClose(arg0 any) *MockDatagramStreamTryWriteAllAndCloseCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TryWriteAllAndClose", reflect.TypeOf((*MockDatagramStream)(nil).TryWriteAllAndClose), arg0)
+	return &MockDatagramStreamTryWriteAllAndCloseCall{Call: call}
+}
+
+// MockDatagramStreamTryWriteAllAndCloseCall wrap *gomock.Call
+type MockDatagramStreamTryWriteAllAndCloseCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockDatagramStreamTryWriteAllAndCloseCall) Return(arg0 error) *MockDatagramStreamTryWriteAllAndCloseCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockDatagramStreamTryWriteAllAndCloseCall) Do(f func([]byte) error) *MockDatagramStreamTryWriteAllAndCloseCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockDatagramStreamTryWriteAllAndCloseCall) DoAndReturn(f func([]byte) error) *MockDatagramStreamTryWriteAllAndCloseCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // Write mocks base method.
 func (m *MockDatagramStream) Write(p []byte) (int, error) {
 	m.ctrl.T.Helper()
